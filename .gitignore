@@ -1,0 +1,9 @@
+.venv/
+.devtools/
+.audit/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.test-output/
+tests/.tmp/

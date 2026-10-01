@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Edit Bridge</title>
+<link rel="stylesheet" href="assets/editor.css">
+</head>
+<body>
+<header>
+  <div><span class="eyebrow">COMFYUI &middot; LOCAL WORKSPACE</span><h1>Local Edit Bridge <span class="tag">MANUAL IMAGE EDITING</span></h1></div>
+  <div class="header-actions"><label class="file-button">&#xFF0B; Load image<input id="source-file" type="file" accept="image/png,image/jpeg,image/webp"></label><button id="refresh">Refresh jobs</button></div>
+</header>
+<nav aria-label="Editing pipeline" id="pipeline"><span>01 Paint region</span><span>02 Review crop</span><span>03 Send to GPT</span><span>04 Import result</span><span>05 Blend &amp; save</span></nav>
+<div id="message" role="status" aria-live="polite">Load a PNG or drop it on the canvas to begin. Nothing is sent to an external service.</div>
+<main>
+  <section class="job-bar">
+    <h2>Active job</h2>
+    <select id="jobs" aria-label="Saved jobs"><option value="">Choose a saved job&hellip;</option></select>
+    <span id="state" class="badge">NO IMAGE</span>
+    <button id="copy-id">Copy ID</button>
+    <code id="job-id">&mdash;</code>
+    <span id="dimensions" class="muted"></span>
+  </section>
+  <div class="flow">
+    <section data-step="mask">
+      <div class="step-heading"><h2>01 &middot; Original &amp; edit</h2></div>
+      <div id="canvas-drop" class="canvas-stage">
+        <canvas id="canvas" aria-label="Image mask painting canvas"></canvas>
+        <span id="zoom" class="zoom-badge">100%</span>
+        <div id="empty">A small edit.<br><strong>The rest stays yours.</strong><p>Drop a source image here</p></div>
+      </div>
+      <div class="tools"><button id="brush" class="selected">Brush</button><button id="eraser">Eraser</button><button id="clear">Clear</button></div>
+      <label>Brush size <output id="brush-value">32 px</output><input id="brush-size" type="range" min="1" max="256" value="32"></label>
+      <div class="tools"><button id="undo">Undo</button><button id="redo">Redo</button><button id="fit">Fit view</button></div>
+      <p class="muted">White edits, black preserves. The coral overlay is your mask. Ctrl+Z undo &middot; Ctrl+Shift+Z / Ctrl+Y redo &middot; Wheel to zoom &middot; Space-drag or middle-drag to pan.</p>
+      <details><summary>Image metadata</summary><pre id="metadata">No image loaded.</pre><details><summary>Raw PNG text</summary><pre id="raw-metadata"></pre></details></details>
+    </section>
+    <section id="crop-controls" data-step="crop">
+      <div class="step-heading"><h2>02 &middot; Exact GPT crop</h2></div>
+      <div class="crop-stage">
+        <img id="crop-preview" alt="Clean crop to export" hidden>
+        <p id="crop-empty" class="muted">Paint a region in step 1 to preview the exact crop sent to GPT.</p>
+      </div>
+      <label>Crop factor <output id="factor-value">2.0&times;</output><input id="crop-factor" type="range" min="1" max="6" step="0.1" value="2"></label>
+      <div class="two"><label>Minimum px<input id="min-size" type="number" min="1" max="16384" value="64"></label><label>Multiple of<select id="multiple"><option>1</option><option>8</option><option>16</option><option>32</option><option>64</option></select></label></div>
+      <label class="check"><input id="square" type="checkbox"> Square crop</label>
+      <label>Output size<select id="output-policy"><option value="native">Native crop pixels</option><option value="limit_1024">Limit longest side to 1024</option></select></label>
+      <p id="crop-info" class="muted">Paint a mask to calculate the crop.</p>
+    </section>
+  </div>
+  <section data-step="prompt">
+    <div class="step-heading"><h2>03 &middot; Prepare the manual handoff</h2></div>
+    <label>Your edit request<textarea id="request" rows="2" placeholder="Describe only what should change&hellip;"></textarea></label>
+    <details><summary>Optional selected generation context</summary><textarea id="context" rows="2" placeholder="Only selected useful metadata; never added automatically."></textarea></details>
+    <button id="generate">Build editing prompt</button>
+    <details><summary>Image 2 &middot; Overlay location guide</summary><img id="overlay-preview" alt="Crop with a semi-transparent coral overlay marking the edit region" hidden></details>
+    <label>Final prompt &middot; editable<textarea id="prompt" rows="6" placeholder="Generate a prompt above, then review it here."></textarea></label>
+    <div class="actions"><button id="prepare" class="primary">Prepare for GPT &amp; open folder</button><details id="handoff-more" class="handoff-more"><summary aria-label="More handoff options" title="More handoff options"><span aria-hidden="true">&#9656;</span> More options</summary><div class="actions"><button id="copy-prompt">Copy prompt</button><a id="open-crop" class="button" target="_blank" rel="noopener" download="01-crop.png" hidden>Download image 1 &middot; Clean crop</a><a id="open-overlay" class="button" download="02-overlay.png" hidden>Download image 2 &middot; Crop overlay</a><button id="open-handoff" hidden>Open GPT folder</button><button id="sent">Mark as sent</button></div></details></div>
+    <p id="handoff-help" class="muted">Open the prepared folder, select the two images and prompt.txt, then drag all three into GPT. Import the edited crop in step 4.</p>
+    <details><summary>Local job folder</summary><code id="directory">&mdash;</code><button id="copy-folder">Copy folder path</button></details>
+  </section>
+  <section data-step="import" id="result-drop" class="drop-zone">
+    <div class="step-heading"><h2>04 &middot; Returned edit</h2></div>
+    <img id="import-preview" alt="Imported and fitted result" hidden>
+    <p class="muted">Save the edited image from ChatGPT, then drop it here.</p>
+    <label>Import fitting<select id="import-policy"><option value="contain" selected>Fit inside crop &middot; transparent padding</option><option value="strict">Check aspect ratio (strict)</option></select></label>
+    <label class="file-button secondary">Import GPT result<input id="result-file" type="file" accept="image/png,image/jpeg,image/webp"></label>
+    <button id="retry-import" hidden>Retry selected image</button>
+    <p id="import-status" role="status" aria-live="polite" class="muted">Prepare the handoff, then choose or drop a saved image file here.</p>
+  </section>
+  <section data-step="blend">
+    <div class="step-heading"><h2>05 &middot; Harmonize &amp; composite</h2><div class="step-history"><button data-rework="final" title="Reopen the finalized save so the composite can be revised again.">&#8630; Rework save</button><button data-restore="final" title="Restore the finalized save.">Undo rework</button></div></div>
+    <div class="blend-controls"><label class="check"><input id="color-enabled" type="checkbox" checked> Color match</label><label>Strength <output id="strength-value">1.00</output><input id="strength" type="range" min="0" max="1" step="0.05" value="1"></label><label title="Expand the blend mask in original-image pixels, within the returned crop.">Mask expansion px<input id="mask-expansion" type="number" min="0" max="128" step="1" value="0"></label><label>Inward feather px<input id="feather" type="number" min="0" max="128" value="8"></label><label>Seam width px<input id="seam-width" type="number" min="0" max="128" value="8"></label></div>
+    <label class="check"><input id="debug" type="checkbox"> Save additional debug images</label>
+    <div class="actions"><button id="composite" class="primary">Composite &amp; preview seam</button><button id="finalize">Finalize PNG</button><a id="save-final" class="button primary" download="local-edit-final.png" hidden>Save final PNG</a></div>
+    <p id="processing-info" class="muted">Color match samples unchanged surrounding pixels. Expansion grows the blend area; feathering softens its inner edge.</p>
+  </section>
+  <details class="seam-details"><summary>Seam refinement mask</summary><img id="seam-preview" alt="Narrow seam band" hidden><p class="muted">Optional ComfyUI finishing: load this job in Local Edit Bridge and use its seam mask. Suggested denoise 0.08&ndash;0.25. See the example workflow.</p></details>
+  <section class="compare-section">
+    <div class="step-heading"><h2>Before / after</h2><div class="compare-controls"><select id="compare-mode" aria-label="Compare mode"><option value="slide">Slide</option><option value="click">Hold for Before</option></select><input id="compare-position" type="range" min="0" max="100" value="50" aria-label="Before after split"></div></div>
+    <div id="compare-frame">
+      <img id="before-preview" alt="Original full image" hidden>
+      <img id="after-preview" alt="Full composited image" hidden>
+      <span class="compare-label before">Before</span>
+      <span class="compare-label after">After</span>
+      <div id="compare-divider" hidden></div>
+      <p id="compare-empty" class="muted">Composite an edit to compare before and after.</p>
+    </div>
+  </section>
+</main>
+<footer>Local files only &middot; Manual external-editor handoff &middot; v0.1</footer>
+<script type="module" src="assets/editor.js"></script>
+</body></html>
