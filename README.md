@@ -1,249 +1,270 @@
 # Local Edit Bridge for ComfyUI
 
-A local editing bridge for **one masked semantic edit**, connecting ComfyUI with GPT and other multimodal image-editing models through a manual handoff.
+English | [简体中文](README.zh-CN.md)
 
-Paint a mask → preview a context crop → prepare clean crop + crop overlay guide + prompt → manually edit in ChatGPT →
-import the returned image → context-ring color match (on by default, strength 1) → mask-aware composite →
-optional ComfyUI seam refinement.
+Paint over the part of an image you want to change, send that crop to an image-editing model, then bring the result back into ComfyUI. Local Edit Bridge handles the crop, the location guide, and blending the edited area back into your original image.
 
-No API key, provider SDK, automatic upload, website automation, model download or account is used.
-The plugin does not implement a diffusion engine. Cropping, stitching and color transfer are
-established techniques; this project adds the persistent manual job bridge and its editing UI.
+This is an early project, close to an MVP. The basic editing loop works, but there are still rough edges. It is meant for one person working locally on one edit at a time.
 
-## 当前状态与功能
+The plugin does not call an image API, upload files, control your browser, or download models. You send the files yourself and save the result yourself. No API key is needed for the plugin; access to your chosen image service is separate.
 
-项目目前处于**接近 MVP 的早期阶段**，已具备从绘制蒙版、准备外部编辑材料到导入结果、局部合成与保存的基本流程。当前重点是把单张图片的一次局部修改做顺畅，交互与功能仍会继续完善。
+## What you can do
 
-- **按步骤组织编辑**：五个步骤串起完整流程，蒙版、裁剪和合成参数放在各自控制的区域内；编辑器可独立于节点图使用。
-- **可撤销的蒙版绘制**：支持画笔、橡皮擦、笔刷大小预览、缩放和平移，以及 Ctrl+Z / redo 快捷键。
-- **带上下文的精确裁剪**：预览实际送给模型的区域，调整周边上下文和导出尺寸，同时生成尺寸一致的干净裁剪图与半透明定位图。
-- **手动交接材料集中准备**：提示词可生成后自行修改；准备完成后打开只含两张图和一个 prompt 文件的文件夹，方便全选并拖入外部模型会话。
-- **返工保留已有输入**：Rework 恢复该步骤的可编辑状态，保留蒙版、提示词与配置，仅清除受影响的下游结果；当前服务会话内可撤销最近一次返工。
-- **可调节的局部融合**：支持颜色匹配、蒙版扩展和向内羽化。颜色匹配默认开启、强度为 1；最终合成蒙版以外的原图像素保持不变。
-- **结果导入与大幅对比**：支持拖入返回图片，默认按比例适配裁剪区域；底部可滑动比较前后效果，或按住查看原图。
-- **本地任务保存与 ComfyUI 衔接**：任务可重新打开，活动目录保留最新产物；节点可输出合成图、接缝蒙版、提示词与元数据，供后续工作流使用。
+- Paint and erase a mask, undo strokes, zoom in, and pan around the image.
+- See the exact crop you will send, including the surrounding area that helps the model understand the edit.
+- Prepare two matching images and an editable prompt in one folder.
+- Reopen a step without losing the mask or prompt you already worked on.
+- Adjust color matching, expand the blend area, and soften its edges.
+- Compare the original and edited image with a sliding divider or by holding down the pointer.
+- Reopen saved jobs and use the result in a normal ComfyUI workflow.
 
-外部模型编辑仍需手动完成。目前尚未实现自动位置对齐、多候选结果管理、持久化笔画历史或编辑器内一键扩散精修；具体限制见下文。
+![Editor preview](docs/editor-roundtrip.png)
 
-## 工作流思路
+## Install
 
-如果你熟悉 SDXL / Anima 的局部重绘工作流，这套流程和参数配置思路会很熟悉：绘制蒙版、裁剪局部与周边上下文、生成修改结果，再调整蒙版扩展、边缘融合与颜色匹配，将结果合成回原图。
+You need a working ComfyUI installation with Python 3.10 or newer. The plugin uses Pillow, NumPy, and SciPy. Run the commands below with the Python that runs ComfyUI, so the packages end up in the right place.
 
-从工作流分工上，可以把它理解为：**将传统局部重绘中 K 采样器负责的生成环节，替换为外部多模态模型的图像编辑环节**。本地工具负责准备编辑区域和最终合成，外部模型负责理解提示词并生成编辑结果。这是对流程角色的类比，并不意味着外部模型沿用 K 采样器的内部机制或采样参数。
+If you already installed this project under its old name, `comfyui-gpt-local-edit-helper`, update that copy. Do not install a second copy alongside it.
 
-## 模型适用范围
+### Windows portable ComfyUI
 
-虽然界面仍以 GPT / ChatGPT 为交接示例，这套流程本身并不绑定某个模型或服务。从原理上说，只要其他多模态模型支持接收参考图片与文字指令，并返回编辑后的图片，就可以使用同样的「裁剪图 + 半透明定位图 + 提示词 → 导入结果 → 本地合成」流程。
+Open PowerShell in your portable folder, the one containing both `ComfyUI` and `python_embeded`. Then run:
 
-流程通用并不代表效果相同。按作者的使用判断，其他模型的实际编辑效果可能明显弱于 gpt-image-2；下文的效果比较与使用经验主要围绕 GPT 方案展开。
+```powershell
+git clone https://github.com/ecl1p5e-quinoa/ComfyUI-Local-Edit-Bridge.git .\ComfyUI\custom_nodes\ComfyUI-Local-Edit-Bridge
+.\python_embeded\python.exe -m pip install -r .\ComfyUI\custom_nodes\ComfyUI-Local-Edit-Bridge\requirements.txt
+```
 
-## 与 SDXL / Anima 等传统局部重绘方案的比较
+Restart ComfyUI after installation. Refreshing the browser alone does not load a new plugin.
 
-以下比较与处理方法来自作者的个人使用经验。
+### Other Python-based ComfyUI installations
 
-在我的使用体验中，GPT 在大多数图片编辑任务和提示词理解上，相较于 SDXL / Anima 有显著优势。不过，这并不意味着这套方案可以完全替代开源扩散模型的传统局部重绘。
+Open a terminal in the `ComfyUI` folder and activate the Python environment you normally use to start ComfyUI. Then run:
 
-当你保留了原图生成时使用的模型和相关数据时，传统局部重绘可以沿用这些生成条件，因此在维持原图风格、角色特征等一致性方面，往往更有优势。GPT 方案仍有以下局限，其中部分问题可以结合传统局部重绘来处理。
+```sh
+git clone https://github.com/ecl1p5e-quinoa/ComfyUI-Local-Edit-Bridge.git custom_nodes/ComfyUI-Local-Edit-Bridge
+python -m pip install -r custom_nodes/ComfyUI-Local-Edit-Bridge/requirements.txt
+```
 
-### 1. 重绘区域可能出现噪点
+Restart ComfyUI when the commands finish.
 
-GPT-image 生成的重绘区域有时会出现噪点。虽然本项目的提示词已经加入了避免噪点的限制，但部分情况下仍然难以避免。
+If you do not have Git, use **Code → Download ZIP** on this repository's GitHub page. Extract the plugin into `ComfyUI/custom_nodes/ComfyUI-Local-Edit-Bridge`. That folder should directly contain `__init__.py`, `requirements.txt`, and `web`, without another repository folder nested inside it. Then run the dependency command for your installation above.
 
-我的处理方式是：对出现噪点的区域，再进行一次**去噪强度极低的传统 SDXL 局部重绘**，尝试清理这些噪点。
+### Open the editor
 
-### 2. 图片缩放可能产生锯齿边缘
+With ComfyUI running, use any of these:
 
-这套流程涉及图片缩放，可能带来锯齿边缘。
+- Open **Tools → Open Local Edit Bridge**.
+- Search for the **Local Edit Bridge** node, add it, and click **Open Editor**. Its category is `image/local edit`.
+- Open [the editor directly](http://127.0.0.1:8188/gpt-local-edit/editor). If your ComfyUI uses another port, replace `8188` with that port.
 
-根据我的使用经验，将图片不做其他编辑地进行一次 **VAE 编码 → VAE 解码**，可以有效缓解这类问题。
+You do not need to build or run a node graph to use the editor. The node is useful when you want to continue editing the result in ComfyUI.
 
-### 3. 复杂角色的特征可能发生漂移
+To update later, run `git pull` inside the installed plugin folder, then restart ComfyUI and refresh the editor.
 
-在修复人物解剖结构时，如果原图的角色特征比较复杂，例如 anthro furry 类角色，或者原图生成时使用了角色 LoRA，GPT 重绘可能在修复结构的同时改变原有角色特征。
+## Your first edit
 
-可以尝试在提示词中加强对角色特征的描述，但我的经验是，这种做法的作用往往有限。这也是保留原始模型与生成数据的传统局部重绘，在一致性上更有优势的场景之一。
+The first two cards sit side by side on a wide screen. Follow the step numbers, then check the large before/after view at the bottom.
 
-### 4. 定位蒙版不是对 GPT 的强约束
+### Step 1: Load an image and paint the area
 
-传给 GPT 的半透明蒙版叠加图，是帮助模型理解修改位置的视觉参考，并不等同于通过图像编辑 API 传入蒙版的强控制。GPT 返回的图片中，完全可能有蒙版区域之外的内容也被修改。
+Click **Load image**, or drop a saved image file onto **Original & edit**. PNG is a good choice if you want to keep the generation information stored in the image.
 
-当这些额外修改与本地合成范围不一致，导致最终拼接显得生硬时，可以尝试增大 **Step 5 的 Mask expansion px**，让最终合成范围覆盖更多相邻的修改内容，以改善衔接。
+Use **Brush** to paint the part you want changed and **Eraser** to remove paint. The colored overlay shows your selection. In the saved mask, white means edit and black means keep.
 
-## Install and open
+- Change **Brush size** to adjust the brush. The circle under the pointer shows its size.
+- Use **Undo** and **Redo**, or Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z. Ctrl+Y also works for redo. These shortcuts apply when the canvas is hovered or focused; text boxes keep their usual shortcuts.
+- Scroll to zoom. Hold Space and drag, or drag with the middle mouse button, to move around. **Fit view** fits the image back into the canvas.
 
-Place this folder in the active ComfyUI installation's custom_nodes folder.
-Its image dependencies are Pillow, NumPy and SciPy (already present in the audited portable install).
-If needed, install requirements.txt using **ComfyUI's Python**, then restart ComfyUI.
-There is no dependency installation on plugin startup.
+**Image metadata** shows generation information the plugin can read, including common ComfyUI and A1111/Forge PNG data. It may not understand every custom workflow, so the original PNG text is also available.
 
-Add **Local Edit Bridge** (image/local edit) and click **Open Editor**.
-You can also use **Tools → Open Local Edit Bridge**, or open
-[the local editor](http://127.0.0.1:8188/gpt-local-edit/editor) (adjust your local port).
-The editor works without a graph; the node is only needed for a diffusion finishing workflow.
+### Step 2: Check the crop
 
-## Complete manual workflow
+**Exact GPT crop** shows the clean image that will go to the model. Both exported images use this crop, not the full original image.
 
-1. Load a PNG with **Load image**, or drop one on the canvas. Basic ComfyUI and A1111/Forge
-   metadata appears in the sidebar; raw text remains inspectable.
-2. Paint the edit region. White means edit; black means preserve. The coral overlay represents
-   the mask. Use brush/eraser, Undo/Redo, wheel zoom, Space-drag/middle-drag pan and Fit view.
-3. Set crop factor, minimum size, optional multiple/square and output size. The green rectangle
-   and crop preview define the local blend context; GPT receives two matching crops.
-4. Enter the edit request, optionally add selected metadata context, and **Build editing prompt**.
-   Inspect/edit the final prompt, then **Prepare for GPT**. Preparing freezes source/mask/crop.
-5. Click **Prepare for GPT & open folder**. The local file manager opens the job's
-   gpt-handoff folder, containing only 01-crop.png, 02-overlay.png and prompt.txt.
-   Select all three files and drag them into GPT. **Open GPT folder** reopens it later.
-   The crop is the edit target; the overlay is a location guide.
-6. Save the edited crop and drop it into **Step 4 · Returned edit**, or choose **Import GPT result**.
-   **Fit inside crop** is the default and preserves proportions with transparent padding.
-   Strict aspect checking remains available when you need it.
-7. Color match defaults to **on**, strength **1**. Adjust it, mask expansion, inward feather and seam width, then
-   **Composite & preview seam**. Review before/after and the narrow seam mask.
-8. **Finalize PNG** writes final.png locally. **Save final PNG** also downloads it.
-   Source dimensions, source alpha and raw PNG text are preserved.
-9. Reopen a job from the recent-jobs selector after refresh or restart. Finalized jobs are
-   editable again through **Rework this step**. Use **Undo rework** to restore the prior state.
-
-The job folder path can still be copied. The GPT folder button opens only that job's
-validated handoff subfolder on the ComfyUI computer; folder opening requires a local editor
-connection. A source upload always creates a new unique job.
-
-## Pixel preservation and image behavior
-
-- Crop coordinates use integer exclusive right/bottom bounds. The crop is shifted/clamped to the
-  source; complete mask containment takes priority over size-multiple and square requests.
-- The two GPT images share the selected crop bounds and export resolution, including the optional 1024 limit.
-- Previously prepared jobs retain their original import contract. Rework step 3, rebuild the prompt and
-  prepare again to switch to the clean-crop plus overlay handoff.
-- Strict import tolerates up to 2% relative aspect discrepancy for small rounding differences,
-  reporting any resize. Larger discrepancies require an explicit proportional contain policy.
-- Color match estimates channel mean/std from an **exterior context ring**, excluding transparent
-  result pixels. At least 64 samples are required. Scale is limited to 0.8–1.25, mean shift to
-  32/255; flat channels use mean-only correction. Strength interpolates the correction over the
-  returned patch; it does not repeatedly correct an already processed image.
-- Feathering is inward. Returned alpha multiplies mask coverage. **Every source channel outside
-  the expanded blend mask stays bit-identical**, including source alpha.
-- Seam width is a radius in native pixels on both sides of the binary mask boundary.
-  The seam is dilation minus erosion, not the whole masked region.
-- Metadata records original generation provenance. It does not imply that the original prompt
-  fully describes the edited image. Final PNGs add a namespaced edit provenance entry.
-
-## Optional diffusion finishing
-
-Copy the job ID into **Local Edit Bridge**. Its outputs are composited IMAGE, seam MASK,
-prepared prompt and job metadata. Load examples/seam_refinement.json, select your own compatible
-checkpoint and paste the job ID. The example uses existing VAEEncode, SetLatentNoiseMask, KSampler,
-VAEDecode and ImageCompositeMasked nodes.
-
-Try denoise around **0.08–0.25** and tune to your model/image. The final ImageCompositeMasked is
-essential: VAE encode/decode can change pixels outside the sampling mask, so it restores all pixels
-outside the seam from the pre-refinement composite. Do not omit it. The example does not fetch a
-model. For source dimensions that your VAE cannot encode exactly, pad before encoding and crop
-the decoded result back before the final masked composite.
-
-One-click sampling from the editor is intentionally deferred. Existing ComfyUI sampling/model
-management is more capable and should remain the owner of this operation.
-
-## Job storage
-
-ComfyUI/output/gpt_local_edit/jobs/&lt;32-character UUID&gt;/
-
-    original.png          full-resolution source, original PNG text
-    mask.png              frozen full-resolution white-edit mask
-    crop.png              local blend context crop
-    crop_mask.png         export-resolution mask (local reference)
-    prompt.txt            reviewed handoff instruction
-    metadata.json         schema, state, revision, coordinates, settings, metadata
-    overlay.png           image 2: crop + semi-transparent coral location guide
-    returned_<id>.png      imported result
-    aligned_<id>.png       returned crop restored to native pixel size (no spatial registration)
-    composite_<id>.png     full-resolution composite
-    seam_<id>.png          narrow refinement band
-    final.png             finalized PNG with provenance
-
-Draft and optional debug artifacts are managed by the editor. Reimport invalidates active derived
-outputs; replaced plugin artifacts are removed after the current manifest is saved. Only current
-artifacts remain in the job folder. Opening an older job also removes its obsolete plugin artifacts.
-Unrelated files and other job folders are not touched.
-State transitions are DRAFT → READY_FOR_EXTERNAL_EDIT → WAITING_FOR_RESULT →
-RESULT_IMPORTED → COMPOSITED → FINALIZED. Import can skip the waiting state.
-A manifest revision prevents concurrent tabs from silently overwriting each other.
-
-## Architecture and development
-
-The core package is independent of ComfyUI and Torch. The prompt package prepares instructions,
-bridge/manual.py owns the handoff, comfy adapts local routes and node tensors, and web is a
-plain Canvas/ES-module editor. The core can be reused by a future standalone application.
-
-Normal Python development setup:
-
-    python -m venv .venv
-    .venv\Scripts\python -m pip install -e ".[dev]"
-    .venv\Scripts\python -m pytest --confcutdir=tests tests
-
-The development environment is separate from ComfyUI's runtime; activating it is never required
-to run the plugin. Do not install Torch into the development environment.
-
-The audited portable install uses Python 3.13.9 and lacks the standard venv module. Its matching
-development environment was created with project-local virtualenv:
-
-    ..\..\..\python_embeded\python.exe -m pip install --target .devtools virtualenv
-    ..\..\..\python_embeded\python.exe -c "import sys; sys.path.insert(0,'.devtools'); import virtualenv; virtualenv.cli_run(['.venv'])"
-    .venv\Scripts\python -m pip install -e ".[dev]"
-
-tools/make_fixture.py creates a deterministic synthetic source/returned crop.
-tools/browser_smoke.cjs tests the local editor using Playwright and installed Edge; no ChatGPT
-website is involved. Set NODE_PATH to your Playwright package directory and pass the local server
-URL and development Python executable. See docs/VALIDATION.md for this installation's results.
-
-## Prior art and licensing
-
-See [the source-level audit](docs/PRIOR_ART.md), [design](docs/MVP_DESIGN.md) and
-[third-party notice](THIRD_PARTY.md). References include
-[InpaintCanvas](https://github.com/DenRakEiw/ComfyUI-InpaintCanvas),
-[CropStitch-NB2](https://github.com/amortegui84/comfyui-inpaint-cropstitch-nb2),
-[NKD Basic Tools](https://github.com/Nekodificador/ComfyUI-NKD-Basic-Tools) and
-[CropAndStitch](https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch).
-No source from those projects is copied or vendored. This project's original code is MIT;
-upstream software keeps its own licenses.
-
-## Limitations and v0.2
-
-This is a single-user, local-machine editor, not an authenticated multi-user service.
-Source image limit: 32 MiB / 24 million pixels; 8-bit images only. PNG text and ICC are preserved,
-but arithmetic uses stored RGB channel values rather than a color-managed linear workflow.
-Undo history is memory-bounded and session-only; mask/job state is persisted.
-Generation metadata extraction is best-effort, especially for custom conditioning graphs.
-Automatic translation/affine alignment, multiple candidates, persistent brush history, cross-device
-job import and OS image clipboard integration are not implemented.
-Prompt text is saved when the job is prepared; review text not yet prepared can be lost on reload.
-
-Next: reliable opt-in boundary alignment, richer candidate comparison, and a configurable
-one-click seam-refinement handoff after the example workflow has been validated with users' models.
-
-![Validated editor round trip](docs/editor-roundtrip.png)
-
-### Revising a completed job
-
-- Over the canvas, Ctrl/Cmd+Z undoes a stroke; Ctrl/Cmd+Shift+Z or Ctrl+Y redoes it. Text fields retain their normal editing shortcuts. The brush outline shows the diameter at the current zoom.
-- **Rework this step** reopens editing while preserving the mask, crop settings, prompt, returned image (when reworking import), and processing settings. Only dependent downstream results are cleared. Mask/crop and prompt editing preserve each other.
-- **Undo rework / Redo rework** toggles the most recent step restart, including after a page reload within the same server session. One temporary checkpoint outside the job folder is retained; another rework replaces it and restarting the backend clears it. Stroke history is separate and lasts while the image remains open.
-- The active job folder contains only the latest artifacts. Undo rework uses the temporary checkpoint, not a disk history inside the job.
-
-### Layout and comparison
-
-Steps 1 and 2 sit side by side, with mask and crop settings inside their respective cards.
-Steps 3 (GPT handoff), 4 (returned edit), and 5 (blend/save) follow in order. Rework actions
-sit next to each step title. The large comparison at the bottom overlays the original and
-composite: move the pointer or range control to slide the boundary, or choose Click to
-hold the original and release to show the result. This interaction is inspired by
-[rgthree Image Comparer](https://github.com/rgthree/rgthree-comfy); no upstream code was copied.
-
-### Mask expansion in step 5
-
-**Mask expansion px** grows the blend mask by 0–128 original-image pixels (default 0).
-It leaves the painted mask and GPT export untouched. Color matching, inward feathering and
-the seam preview use the expanded mask. Expansion stops at the returned crop boundary;
-if more room is needed, enlarge the crop in step 2 and prepare a new handoff.
-Re-compositing always starts from the original mask, so expansion never accumulates.
+| Setting | What it does |
+| --- | --- |
+| Crop factor | Includes more or less of the area around your painted selection. The default is 2. |
+| Minimum px | Sets the minimum crop size, where the source image has room. |
+| Multiple of | Tries to make the width and height multiples of the selected number. Leave it at 1 if you do not need this. |
+| Square crop | Tries to make the crop square. |
+| Output size | Keeps the crop's original pixel size, or shrinks its longest side to at most 1024 pixels. |
+
+The crop stays inside the source image and keeps the painted area covered. At the image edges, a square shape or exact size multiple may not be possible.
+
+### Step 3: Prepare the files and send them
+
+1. In **Your edit request**, describe what you want changed.
+2. If useful, expand **Optional selected generation context** and add details about the character or original generation. The plugin does not automatically put all your image metadata into the prompt.
+3. Click **Build editing prompt**. Read the text in **Final prompt** and change anything you want.
+4. Click **Prepare for GPT & open folder**. This saves the prepared edit and opens a folder containing just these three files:
+
+| File | Purpose |
+| --- | --- |
+| `01-crop.png` | The clean crop the model should edit. |
+| `02-overlay.png` | The same crop with a colored, partly transparent mark showing where to edit. |
+| `prompt.txt` | Your editing instructions. |
+
+Select all three files and drag them into your image-editing conversation. If the service does not accept text files, attach the two images and paste the contents of `prompt.txt` into the message. Ask for an edited version of the clean crop; the colored guide should not appear in the result.
+
+**More options** contains **Copy prompt**, both image downloads, **Open GPT folder**, and **Mark as sent**. Marking the job as sent is optional; you can import a result without it.
+
+Preparing the files locks the earlier editing controls until you choose **Rework this step**. Save your prompt by preparing the job before you refresh the page; unfinished prompt changes can be lost.
+
+### Step 4: Bring the edited image back
+
+Save the image returned by the model to your computer. Drop that saved file onto **Returned edit**, or click **Import GPT result** and select it. Dragging an image directly from a chat page may only pass a link, which the editor cannot import.
+
+Leave **Import fitting** at **Fit inside crop** to keep the returned image's proportions. Any unused space is left transparent. **Check aspect ratio (strict)** accepts only a small difference in width-to-height ratio, up to 2%. If it rejects your image, choose **Fit inside crop** and click **Retry selected image**.
+
+The plugin resizes the result to fit the crop. It does not automatically move or rotate the contents to line them up with the original.
+
+### Step 5: Blend, compare, and save
+
+Start with the defaults, then click **Composite & preview seam** to see the result.
+
+| Setting | What it does |
+| --- | --- |
+| Color match | Uses the surrounding area to help the returned crop match the original's colors. On by default. |
+| Strength | Controls the amount of color correction. The default is 1, the full correction. |
+| Mask expansion px | Grows the area used for blending by 0–128 original-image pixels. The default is 0. |
+| Inward feather px | Softens the edge toward the inside of the blend area. |
+| Seam width px | Sets how far the optional seam mask extends on each side of the edge. This mask is for later touch-ups. |
+
+Mask expansion changes the final blend area, not your painted mask or the images sent to the model. It stops at the crop boundary. If you need more room, enlarge the crop in Step 2 and prepare a new edit. Repeated previews always start from the original mask, so expansion does not keep adding up.
+
+Use **Before / after** at the bottom to inspect the result. **Slide** lets you move the dividing line; **Hold for Before** shows the original while you hold the pointer down and the result when you release it.
+
+When it looks right, click **Finalize PNG** to write `final.png` into the job folder. **Save final PNG** downloads a copy through your browser. The saved image keeps the original dimensions and transparency. Pixels outside the final blend mask stay unchanged.
+
+## Change an earlier step
+
+Click **Rework this step** beside that step's title. It makes the step editable again and clears later results that depend on it. It keeps your inputs: repainting does not erase your prompt, and rewriting the prompt does not erase your mask.
+
+**Undo rework** brings back the state before the latest rework; **Redo rework** switches back again. Only one such checkpoint is kept across the editor. It survives a page refresh while the same ComfyUI process is running, but a new rework replaces it and restarting ComfyUI clears it.
+
+Brush undo is separate. It has a memory limit and lasts only while that image stays open.
+
+## Where your files go
+
+Choose a saved job from **Active job** to continue it. Loading a new source image creates a new job.
+
+By default, jobs are stored under:
+
+```text
+ComfyUI/output/gpt_local_edit/jobs/<job-id>/
+```
+
+If you changed ComfyUI's output folder, jobs go there instead. In Step 3, expand **Local job folder** to see and copy the exact path.
+
+The folder holds the original image, mask, crop, prompt, returned image, current blend, and saved result. `metadata.json` records the settings. The `gpt-handoff` subfolder contains the three files you send to the model.
+
+Only the latest files for each part of the job are kept, rather than a history of every attempt. Rework undo uses a temporary copy outside the job folder. The plugin also cleans up its old replaced files when reopening an older job; it leaves unrelated files and other jobs alone. Avoid editing the same job in two tabs: if one tab saves a newer version, the other will need to reload it.
+
+Original PNG text and color-profile data are kept, and the final PNG adds a record of this edit. The original generation prompt remains a record of how the source was made; it may no longer describe the edited image exactly.
+
+## Why use this instead of normal inpainting?
+
+If you have used SDXL or Anima inpainting, the overall process should feel familiar: select an area, crop it with some surroundings, generate a replacement, then blend it back. You can think of the external image model as taking over the generation step normally handled by KSampler. That is a comparison of their roles, not a claim that their settings or inner workings are the same.
+
+The interface uses GPT as its example, but any service that accepts images and text and returns an edited image can fit this process. In my experience, other models may give much worse results than gpt-image-2.
+
+The comments below come from my own use. I find GPT much better at most image-editing tasks and understanding prompts than SDXL / Anima. Still, when you have the model and settings that made the original, traditional inpainting often does a better job of keeping the style and character consistent.
+
+### Noise in the edited area
+
+GPT-image can add noise even though the prompt asks it not to. My workaround is another pass over the noisy area with traditional SDXL inpainting at a very low denoise strength.
+
+### Jagged edges after resizing
+
+Resizing in this process can leave jagged edges. In my experience, running the image through VAE encoding and decoding once, without another edit, can help smooth them.
+
+### Complex characters can lose their features
+
+When fixing anatomy on a complex character, such as an anthro furry character or one made with a character LoRA, GPT may change identifying features as well. Describing those features more clearly in the prompt is worth trying, but I have found the benefit limited.
+
+### The colored guide is only a guide
+
+The overlay helps the model understand where to edit. It is not a strict mask passed to an image-editing API, so the model may change things outside the marked area too. If those changes cause an awkward join when you paste the crop back, try increasing **Mask expansion px** in Step 5 to include more of the nearby changes.
+
+## Optional: touch up the seam in ComfyUI
+
+Once you have blended the result, use **Copy ID** in the editor and paste it into the `job_id` field of the **Local Edit Bridge** node. The node gives you the blended image, a narrow mask around the join, the prompt, and the job details.
+
+You can load [the example workflow](examples/seam_refinement.json) into ComfyUI and choose your own compatible checkpoint. It uses VAEEncode, SetLatentNoiseMask, KSampler, VAEDecode, and ImageCompositeMasked. No model is downloaded for you.
+
+Try a denoise strength around **0.08–0.25** and adjust for your image. Keep the final **ImageCompositeMasked** node: VAE encoding and decoding can change pixels outside the sampled area, and that node puts the untouched surroundings back. If your VAE cannot handle the image's exact dimensions, add padding first, then crop the decoded image back before the final blend.
+
+This step runs in ComfyUI. There is no one-click sampling button in the editor yet.
+
+## Common problems and current limits
+
+| Problem | What to try |
+| --- | --- |
+| The node or menu entry is missing | Check the plugin's folder, restart ComfyUI, and refresh the browser. Look at the ComfyUI terminal for missing-package errors. |
+| An action returns 405 after an update | Restart ComfyUI so it loads the updated plugin, then refresh the editor. |
+| Dropping a returned image does nothing | Save the image as a local file first. Check the message in Step 4, then retry or use the file picker. |
+| The prepared folder does not open | Use the editor on the same computer as ComfyUI, through its local address. You can copy the path under **Local job folder**, or download the two images and copy the prompt from **More options**. |
+| The mask or prompt cannot be edited | Choose **Rework this step** on that card. |
+| Color match seems to do nothing | It needs enough unchanged, nontransparent surrounding pixels. It skips correction when there are too few. |
+| An old job expects a full image instead of a crop | Rework Step 3, rebuild the prompt, and prepare again to use the current two-crop format. |
+
+Uploads are limited to 32 MiB and 24 million pixels, and images must be 8-bit. This is a local, single-user tool without account-based access control.
+
+Automatic position alignment, several result candidates per job, brush history saved across sessions, moving jobs between computers, and pasting images from the system clipboard are not implemented. Better alignment, candidate comparison, and easier seam touch-ups are possible next steps, not current features.
+
+<details>
+<summary>More detail about blending</summary>
+
+Color matching reads a ring just outside the mask and compares channel averages and variation, skipping transparent returned pixels. It needs at least 64 usable pixels. The scale correction stays between 0.8 and 1.25, and the average shift is limited to 32/255. For a flat-color channel, only the average is adjusted. Each preview starts from the imported image, so corrections do not pile up.
+
+The color calculation uses the stored RGB values directly. Keeping the image's color profile does not mean the plugin converts it to linear light before blending.
+
+Feathering stays inside the mask and also respects transparency in the returned image. The seam mask is a narrow strip on both sides of the edge, made by subtracting a smaller mask from a larger one.
+
+Crop bounds use whole pixels. The right and bottom coordinates mark where the crop stops; those pixels are not included.
+
+</details>
+
+## Development
+
+The Python image-processing code is separate from ComfyUI and Torch. `prompt` builds the editing instructions, `bridge/manual.py` handles the editing steps, `comfy` connects them to ComfyUI, and `web` contains the browser editor.
+
+For local development, open a terminal in the plugin folder. With a regular Python installation:
+
+```sh
+python -m venv .venv
+```
+
+Activate that environment using `.venv\Scripts\Activate.ps1` in PowerShell, or `source .venv/bin/activate` on Linux/macOS, then run:
+
+```sh
+python -m pip install -e ".[dev]"
+python -m pytest --confcutdir=tests tests
+```
+
+This environment is only for development. You do not need to activate it to use the plugin, and it does not need a separate Torch installation.
+
+<details>
+<summary>If portable Python does not include venv</summary>
+
+The portable Python 3.13.9 used for this project needed `virtualenv` instead. From the plugin folder under `ComfyUI/custom_nodes`, run these commands in PowerShell:
+
+```powershell
+..\..\..\python_embeded\python.exe -m pip install --target .devtools virtualenv
+..\..\..\python_embeded\python.exe -c "import sys; sys.path.insert(0, '.devtools'); import virtualenv; virtualenv.cli_run(['.venv'])"
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pytest --confcutdir=tests tests
+```
+
+</details>
+
+`tools/make_fixture.py` creates sample images for tests. `tools/browser_smoke.cjs` checks the editor with Playwright and installed Edge, without opening ChatGPT. Set `NODE_PATH` to the folder containing the Playwright package and pass the local server URL and development Python executable. Previous test results are in the [validation notes](docs/VALIDATION.md).
+
+## Credits and license
+
+Cropping, blending, and color matching are existing techniques. This project puts them into an editor for sending an image to an external model and bringing the result back.
+
+References include [InpaintCanvas](https://github.com/DenRakEiw/ComfyUI-InpaintCanvas), [CropStitch-NB2](https://github.com/amortegui84/comfyui-inpaint-cropstitch-nb2), [NKD Basic Tools](https://github.com/Nekodificador/ComfyUI-NKD-Basic-Tools), and [CropAndStitch](https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch). The before/after controls were inspired by [rgthree Image Comparer](https://github.com/rgthree/rgthree-comfy).
+
+No code from those projects is copied or bundled here. This project's original code uses the [MIT license](LICENSE); the referenced projects keep their own licenses. See the [source review](docs/PRIOR_ART.md), [design notes](docs/MVP_DESIGN.md), and [third-party notice](THIRD_PARTY.md) for more detail.
